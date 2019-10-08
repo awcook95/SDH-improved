@@ -33,12 +33,13 @@ typedef struct hist_entry{
 	unsigned long long d_cnt;   /* need a long long type as the count might be huge */
 } bucket;
 
-bucket * histogram;		/* list of all buckets in the histogram   */
-bucket * z_histogram;   /* histogram initialized to all 0s        */
-long long	PDH_acnt;	/* total number of data points            */
+//Global variables
+bucket * h_histogram;	/* list of all buckets in the histogram     */
+long long	PDH_acnt;	/* total number of data points              */
 int num_buckets;		/* total number of buckets in the histogram */
-double   PDH_res;		/* value of w                             */
-atom * atom_list;		/* list of all data points                */
+double   PDH_res;		/* value of w                               */
+atom * h_atom_list;		/* list of all data points                  */
+
 
 
 //Device helper function: Distance of two points in the atom_list
@@ -117,12 +118,11 @@ int main(int argc, char **argv)
 
 	//Allocate host memory
 	num_buckets = (int)(BOX_SIZE * 1.732 / PDH_res) + 1;
-	histogram = (bucket *)malloc(sizeof(bucket)*num_buckets);
-	z_histogram = (bucket *)malloc(sizeof(bucket)*num_buckets);
-	atom_list = (atom *)malloc(sizeof(atom)*PDH_acnt);
+	h_histogram = (bucket *)malloc(sizeof(bucket)*num_buckets);
+	h_atom_list = (atom *)malloc(sizeof(atom)*PDH_acnt);
 
 	//initialize histogram to zero
-	memset(z_histogram, 0, sizeof(bucket)*num_buckets);
+	memset(h_histogram, 0, sizeof(bucket)*num_buckets);
 
 	//Allocate device memory
 	bucket *d_histogram; //pointer to array of buckets
@@ -135,14 +135,14 @@ int main(int argc, char **argv)
 	srand(1);
 	/* Generate data following a uniform distribution */
 	for(i = 0;  i < PDH_acnt; i++) {
-		atom_list[i].x_pos = ((double)(rand()) / RAND_MAX) * BOX_SIZE;
-		atom_list[i].y_pos = ((double)(rand()) / RAND_MAX) * BOX_SIZE;
-		atom_list[i].z_pos = ((double)(rand()) / RAND_MAX) * BOX_SIZE;
+		h_atom_list[i].x_pos = ((double)(rand()) / RAND_MAX) * BOX_SIZE;
+		h_atom_list[i].y_pos = ((double)(rand()) / RAND_MAX) * BOX_SIZE;
+		h_atom_list[i].z_pos = ((double)(rand()) / RAND_MAX) * BOX_SIZE;
 	}
 
 	//Copy host data to device memory
-	cudaMemcpy(d_histogram, z_histogram, sizeof(bucket)*num_buckets, cudaMemcpyHostToDevice);
-	cudaMemcpy(d_atom_list, atom_list, sizeof(atom)*PDH_acnt, cudaMemcpyHostToDevice);
+	cudaMemcpy(d_histogram, h_histogram, sizeof(bucket)*num_buckets, cudaMemcpyHostToDevice);
+	cudaMemcpy(d_atom_list, h_atom_list, sizeof(atom)*PDH_acnt, cudaMemcpyHostToDevice);
 
 	//Define 2D block and grid size
 	int num_threads = 16; //number of threads in one dimension of a block
@@ -168,21 +168,18 @@ int main(int argc, char **argv)
 	
 
 	//Copy data from gpu memory to host memory
-	bucket * GPU_histogram;
-	GPU_histogram = (bucket *)malloc(sizeof(bucket)*num_buckets);
-	cudaMemcpy(GPU_histogram, d_histogram, sizeof(bucket)*num_buckets, cudaMemcpyDeviceToHost);
+	cudaMemcpy(h_histogram, d_histogram, sizeof(bucket)*num_buckets, cudaMemcpyDeviceToHost);
 	
 	/* Print out the histogram again for gpu version */
-	output_histogram(GPU_histogram);
+	output_histogram(h_histogram);
 
 	//report running time
 	printf("******** Total Running Time of Kernel = %0.5f ms *******\n", elapsedTime);
 	cudaEventDestroy(start);
 	cudaEventDestroy(stop);
 
-	free(histogram);
-	free(atom_list);
-	free(GPU_histogram);
+	free(h_histogram);
+	free(h_atom_list);
 	cudaFree(d_histogram);
 	cudaFree(d_atom_list);
 	
