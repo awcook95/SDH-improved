@@ -45,22 +45,7 @@ struct timezone Idunno;
 struct timeval startTime, endTime;
 
 
-/* 
-	Distance of two points in the atom_list 
-*/
-double p2p_distance(int ind1, int ind2) {
-	
-	double x1 = atom_list[ind1].x_pos;
-	double x2 = atom_list[ind2].x_pos;
-	double y1 = atom_list[ind1].y_pos;
-	double y2 = atom_list[ind2].y_pos;
-	double z1 = atom_list[ind1].z_pos;
-	double z2 = atom_list[ind2].z_pos;
-		
-	return sqrt((x1 - x2)*(x1-x2) + (y1 - y2)*(y1 - y2) + (z1 - z2)*(z1 - z2));
-}
-
-//Device helper function which now takes a pointer as an argument instead of using a global pointer
+//Device helper function: Distance of two points in the atom_list
 __device__ double d_p2p_distance(atom *atom_list, int ind1, int ind2) {
 	
 	double x1 = atom_list[ind1].x_pos;
@@ -107,24 +92,6 @@ __global__ void PDH_kernelST(atom *d_atom_list, bucket *d_histogram, int PDH_acn
 	
 }
 
-
-/* 
-	Brute-force SDH solution in a single CPU thread 
-*/
-int PDH_baseline() {
-	int i, j, h_pos;
-	double dist;
-	
-	for(i = 0; i < PDH_acnt; i++) {
-		for(j = i+1; j < PDH_acnt; j++) {
-			dist = p2p_distance(i,j);
-			h_pos = (int) (dist / PDH_res);
-			histogram[h_pos].d_cnt++;
-		} 
-	}
-	return 0;
-}
-
 /* 
 	Set a checkpoint and show the (natural) running time in seconds 
 */
@@ -156,25 +123,6 @@ void output_histogram(bucket *histogram){
 	  	/* we also want to make sure the total distance count is correct */
 		if(i == num_buckets - 1)	
 			printf("\n T:%lld \n", total_cnt);
-		else printf("| ");
-	}
-}
-
-//Prints difference between two histograms
-void output_histogram_diff(bucket *histo1, bucket *histo2){
-	int i; 
-	long long total_cnt1 = 0;
-	long long total_cnt2 = 0;
-	printf("Difference between CPU and GPU histogram\n");
-	for(i=0; i< num_buckets; i++) {
-		if(i%5 == 0) /* we print 5 buckets in a row */
-			printf("\n%02d: ", i);
-		printf("%15lld ", histo1[i].d_cnt - histo2[i].d_cnt);
-		total_cnt1 += histo1[i].d_cnt;
-		total_cnt2 += histo2[i].d_cnt;
-	  	/* we also want to make sure the total distance count is correct */
-		if(i == num_buckets - 1)	
-			printf("\n T:%lld \n", total_cnt1 - total_cnt2);
 		else printf("| ");
 	}
 }
@@ -215,19 +163,6 @@ int main(int argc, char **argv)
 	//Copy host data to device memory
 	cudaMemcpy(d_histogram, z_histogram, sizeof(bucket)*num_buckets, cudaMemcpyHostToDevice);
 	cudaMemcpy(d_atom_list, atom_list, sizeof(atom)*PDH_acnt, cudaMemcpyHostToDevice);
-	
-	/* Start counting time */
-	gettimeofday(&startTime, &Idunno);
-	
-	/* Call CPU single thread version to compute the histogram */
-	PDH_baseline();
-	
-	/* Report running time for CPU version */ 
-	report_running_time("CPU");
-	
-	/* Print out the histogram */
-	output_histogram(histogram);
-
 
 	//Define 2D block and grid size
 	int num_threads = 16; //number of threads in one dimension of a block
@@ -252,9 +187,6 @@ int main(int argc, char **argv)
 
 	/* Print out the histogram again for gpu version */
 	output_histogram(GPU_histogram);
-
-	//print difference between the two histograms
-	output_histogram_diff(histogram, GPU_histogram);
 
 	free(histogram);
 	free(atom_list);
