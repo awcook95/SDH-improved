@@ -40,10 +40,6 @@ int num_buckets;		/* total number of buckets in the histogram */
 double   PDH_res;		/* value of w                             */
 atom * atom_list;		/* list of all data points                */
 
-/* These are for an old way of tracking time */
-struct timezone Idunno;	
-struct timeval startTime, endTime;
-
 
 //Device helper function: Distance of two points in the atom_list
 __device__ double d_p2p_distance(atom *atom_list, int ind1, int ind2) {
@@ -90,22 +86,6 @@ __global__ void PDH_kernelST(atom *d_atom_list, bucket *d_histogram, int PDH_acn
 		} 
 	}
 	
-}
-
-/* 
-	Set a checkpoint and show the (natural) running time in seconds 
-*/
-double report_running_time(const char* version) {
-	long sec_diff, usec_diff;
-	gettimeofday(&endTime, &Idunno);
-	sec_diff = endTime.tv_sec - startTime.tv_sec;
-	usec_diff= endTime.tv_usec-startTime.tv_usec;
-	if(usec_diff < 0) {
-		sec_diff --;
-		usec_diff += 1000000;
-	}
-	printf("Running time for %s version: %ld.%06ld\n",version , sec_diff, usec_diff);
-	return (double)(sec_diff*1.0 + usec_diff/1000000.0);
 }
 
 
@@ -171,22 +151,34 @@ int main(int argc, char **argv)
 	dim3 gridDim(num_blocks, num_blocks); //the grid is the same size in x and y dimension
 	
 	//Start counting time
-	gettimeofday(&startTime, &Idunno);
+	cudaEvent_t start, stop;
+	cudaEventCreate(&start);
+	cudaEventCreate(&stop);
+	cudaEventRecord(start, 0);
 
 	//Launch kernel
 	PDH_kernel<<<gridDim,blockDim>>>(d_atom_list, d_histogram, PDH_acnt, PDH_res);
 	//PDH_kernelST<<<1,1>>>(d_atom_list, d_histogram, PDH_acnt, PDH_res);
+
+	//stop counting time
+	cudaEventRecord(stop, 0);
+	cudaEventSynchronize(stop);
+	float elapsedTime;
+	cudaEventElapsedTime(&elapsedTime, start, stop);
+	
 
 	//Copy data from gpu memory to host memory
 	bucket * GPU_histogram;
 	GPU_histogram = (bucket *)malloc(sizeof(bucket)*num_buckets);
 	cudaMemcpy(GPU_histogram, d_histogram, sizeof(bucket)*num_buckets, cudaMemcpyDeviceToHost);
 	
-	//Report GPU running time
-	report_running_time("GPU");
-
 	/* Print out the histogram again for gpu version */
 	output_histogram(GPU_histogram);
+
+	//report running time
+	printf("******** Total Running Time of Kernel = %0.5f ms *******\n", elapsedTime);
+	cudaEventDestroy(start);
+	cudaEventDestroy(stop);
 
 	free(histogram);
 	free(atom_list);
