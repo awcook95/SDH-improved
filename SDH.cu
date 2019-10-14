@@ -60,14 +60,13 @@ __device__ double d_p2p_distance(double *x_arr, double *y_arr, double *z_arr, in
 
 
 __global__ void PDH_kernel(double *x_arr, double *y_arr, double *z_arr, bucket *d_histogram, int PDH_acnt, int PDH_res){
-	int i = blockIdx.x * blockDim.x + threadIdx.x;
-	int j = blockIdx.y * blockDim.y + threadIdx.y;
-
+	int t = blockIdx.x * blockDim.x + threadIdx.x;
+ 
 	int h_pos;
 	double dist;
 
-	if(i < j && i < PDH_acnt && j < PDH_acnt){ // i < j so distances are not counted twice
-		dist = d_p2p_distance(x_arr, y_arr, z_arr, i,j);
+	for(int i = t + 1; i < PDH_acnt; i++){
+		dist = d_p2p_distance(x_arr, y_arr, z_arr, t, i);
 			h_pos = (int) (dist / PDH_res);
 			atomicAdd(&(d_histogram[h_pos].d_cnt), 1);
 			 
@@ -140,11 +139,9 @@ int main(int argc, char **argv)
 	cudaMemcpy(d_y_arr, h_y_arr, sizeof(double) * PDH_acnt, cudaMemcpyHostToDevice);
 	cudaMemcpy(d_z_arr, h_z_arr, sizeof(double) * PDH_acnt, cudaMemcpyHostToDevice);
 
-	//Define 2D block and grid size
-	int num_threads = 16; //number of threads in one dimension of a block
-	dim3 blockDim(num_threads,num_threads); //num_threads^2 threads per block
-	int num_blocks = (PDH_acnt + num_threads - 1)/num_threads; //calculate number of blocks for the grid in a particular dimension
-	dim3 gridDim(num_blocks, num_blocks); //the grid is the same size in x and y dimension
+	//Define block and grid size
+	int num_threads = 256; //number of threads in one dimension of a block
+	int num_blocks = (PDH_acnt + num_threads - 1)/num_threads; //calculate number of blocks needed
 	
 	//Start counting time
 	cudaEvent_t start, stop;
@@ -153,7 +150,7 @@ int main(int argc, char **argv)
 	cudaEventRecord(start, 0);
 
 	//Launch kernel
-	PDH_kernel<<<gridDim,blockDim>>>(d_x_arr, d_y_arr, d_z_arr, d_histogram, PDH_acnt, PDH_res);
+	PDH_kernel<<<num_blocks,num_threads>>>(d_x_arr, d_y_arr, d_z_arr, d_histogram, PDH_acnt, PDH_res);
 	//PDH_kernelST<<<1,1>>>(d_atom_list, d_histogram, PDH_acnt, PDH_res);
 
 	//stop counting time
