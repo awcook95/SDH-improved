@@ -22,15 +22,14 @@
 
 /* descriptors for single atom in the tree */
 typedef struct atomdesc {
-	double x_pos;
-	double y_pos;
-	double z_pos;
+	double *x_pos;
+	double *y_pos;
+	double *z_pos;
 } atom;
 
 typedef struct hist_entry{
-	//float min;
-	//float max;
 	unsigned long long d_cnt;   /* need a long long type as the count might be huge */
+
 } bucket;
 
 //Global variables
@@ -38,25 +37,29 @@ bucket * h_histogram;	/* list of all buckets in the histogram     */
 long long	PDH_acnt;	/* total number of data points              */
 int num_buckets;		/* total number of buckets in the histogram */
 double   PDH_res;		/* value of w                               */
-atom * h_atom_list;		/* list of all data points                  */
+
+/* 3 arrays for x, y, and z positions of each atom                  */
+double *h_x_arr;
+double *h_y_arr;
+double *h_z_arr;
 
 
 
 //Device helper function: Distance of two points in the atom_list
-__device__ double d_p2p_distance(atom *atom_list, int ind1, int ind2) {
+__device__ double d_p2p_distance(double *x_arr, double *y_arr, double *z_arr, int ind1, int ind2) {
 	
-	double x1 = atom_list[ind1].x_pos;
-	double x2 = atom_list[ind2].x_pos;
-	double y1 = atom_list[ind1].y_pos;
-	double y2 = atom_list[ind2].y_pos;
-	double z1 = atom_list[ind1].z_pos;
-	double z2 = atom_list[ind2].z_pos;
+	double x1 = x_arr[ind1];
+	double x2 = x_arr[ind2];
+	double y1 = y_arr[ind1];
+	double y2 = y_arr[ind2];
+	double z1 = z_arr[ind1];
+	double z2 = z_arr[ind2];
 		
 	return sqrt((x1 - x2)*(x1-x2) + (y1 - y2)*(y1 - y2) + (z1 - z2)*(z1 - z2));
 }
 
 
-__global__ void PDH_kernel(atom *d_atom_list, bucket *d_histogram, int PDH_acnt, int PDH_res){
+__global__ void PDH_kernel(double *x_arr, double *y_arr, double *z_arr, bucket *d_histogram, int PDH_acnt, int PDH_res){
 	int i = blockIdx.x * blockDim.x + threadIdx.x;
 	int j = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -64,27 +67,10 @@ __global__ void PDH_kernel(atom *d_atom_list, bucket *d_histogram, int PDH_acnt,
 	double dist;
 
 	if(i < j && i < PDH_acnt && j < PDH_acnt){ // i < j so distances are not counted twice
-		dist = d_p2p_distance(d_atom_list, i,j);
+		dist = d_p2p_distance(x_arr, y_arr, z_arr, i,j);
 			h_pos = (int) (dist / PDH_res);
 			atomicAdd(&(d_histogram[h_pos].d_cnt), 1);
 			 
-	}
-	
-}
-
-//Single threaded kernel for testing
-__global__ void PDH_kernelST(atom *d_atom_list, bucket *d_histogram, int PDH_acnt, int PDH_res){
-	int i = threadIdx.x;
-
-	int j, h_pos;
-	double dist;
-	
-	for(; i < PDH_acnt; i++) {
-		for(j = i+1; j < PDH_acnt; j++) {
-			dist = d_p2p_distance(d_atom_list,i,j);
-			h_pos = (int) (dist / PDH_res);
-			d_histogram[h_pos].d_cnt++;
-		} 
 	}
 	
 }
@@ -118,31 +104,41 @@ int main(int argc, char **argv)
 
 	//Allocate host memory
 	num_buckets = (int)(BOX_SIZE * 1.732 / PDH_res) + 1;
-	h_histogram = (bucket *)malloc(sizeof(bucket)*num_buckets);
-	h_atom_list = (atom *)malloc(sizeof(atom)*PDH_acnt);
+	h_histogram = (bucket *)malloc(sizeof(bucket) * num_buckets);
+	h_x_arr = (double *)malloc(sizeof(double) * PDH_acnt); //3 arrays for atom positions
+	h_y_arr = (double *)malloc(sizeof(double) * PDH_acnt);
+	h_z_arr = (double *)malloc(sizeof(double) * PDH_acnt);
 
+	
+	
 	//initialize histogram to zero
 	memset(h_histogram, 0, sizeof(bucket)*num_buckets);
 
 	//Allocate device memory
 	bucket *d_histogram; //pointer to array of buckets
-	atom *d_atom_list; //pointer to array of atoms
+	double *d_x_arr;
+	double *d_y_arr;
+	double *d_z_arr;
 
 	cudaMalloc((void**)&d_histogram, sizeof(bucket)*num_buckets);
-	cudaMalloc((void**)&d_atom_list, sizeof(atom)*PDH_acnt);
+	cudaMalloc((void**)&d_x_arr, sizeof(double)*PDH_acnt);
+	cudaMalloc((void**)&d_y_arr, sizeof(double)*PDH_acnt);
+	cudaMalloc((void**)&d_z_arr, sizeof(double)*PDH_acnt);
 
 	
 	srand(1);
 	/* Generate data following a uniform distribution */
 	for(i = 0;  i < PDH_acnt; i++) {
-		h_atom_list[i].x_pos = ((double)(rand()) / RAND_MAX) * BOX_SIZE;
-		h_atom_list[i].y_pos = ((double)(rand()) / RAND_MAX) * BOX_SIZE;
-		h_atom_list[i].z_pos = ((double)(rand()) / RAND_MAX) * BOX_SIZE;
+		h_x_arr[i] = ((double)(rand()) / RAND_MAX) * BOX_SIZE;
+		h_y_arr[i] = ((double)(rand()) / RAND_MAX) * BOX_SIZE;
+		h_z_arr[i] = ((double)(rand()) / RAND_MAX) * BOX_SIZE;
 	}
 
 	//Copy host data to device memory
 	cudaMemcpy(d_histogram, h_histogram, sizeof(bucket)*num_buckets, cudaMemcpyHostToDevice);
-	cudaMemcpy(d_atom_list, h_atom_list, sizeof(atom)*PDH_acnt, cudaMemcpyHostToDevice);
+	cudaMemcpy(d_x_arr, h_x_arr, sizeof(double) * PDH_acnt, cudaMemcpyHostToDevice);
+	cudaMemcpy(d_y_arr, h_y_arr, sizeof(double) * PDH_acnt, cudaMemcpyHostToDevice);
+	cudaMemcpy(d_z_arr, h_z_arr, sizeof(double) * PDH_acnt, cudaMemcpyHostToDevice);
 
 	//Define 2D block and grid size
 	int num_threads = 16; //number of threads in one dimension of a block
@@ -157,7 +153,7 @@ int main(int argc, char **argv)
 	cudaEventRecord(start, 0);
 
 	//Launch kernel
-	PDH_kernel<<<gridDim,blockDim>>>(d_atom_list, d_histogram, PDH_acnt, PDH_res);
+	PDH_kernel<<<gridDim,blockDim>>>(d_x_arr, d_y_arr, d_z_arr, d_histogram, PDH_acnt, PDH_res);
 	//PDH_kernelST<<<1,1>>>(d_atom_list, d_histogram, PDH_acnt, PDH_res);
 
 	//stop counting time
@@ -179,9 +175,8 @@ int main(int argc, char **argv)
 	cudaEventDestroy(stop);
 
 	free(h_histogram);
-	free(h_atom_list);
 	cudaFree(d_histogram);
-	cudaFree(d_atom_list);
+	
 	
 
 	return 0;
