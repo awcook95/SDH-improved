@@ -46,27 +46,87 @@ double *h_z_arr;
 
 
 //Device helper function: Distance of two points in the atom_list
-__device__ double d_p2p_distance(double *x_arr, double *y_arr, double *z_arr, int ind1, int ind2) {
+__device__ double d_p2p_distance(atom atom_struct1, atom atom_struct2, int ind1, int ind2) {
 	
-	double x1 = x_arr[ind1];
-	double x2 = x_arr[ind2];
-	double y1 = y_arr[ind1];
-	double y2 = y_arr[ind2];
-	double z1 = z_arr[ind1];
-	double z2 = z_arr[ind2];
+	double x1 = atom_struct1.x_pos[ind1];
+	double x2 = atom_struct2.x_pos[ind2];
+	double y1 = atom_struct1.y_pos[ind1];
+	double y2 = atom_struct2.y_pos[ind2];
+	double z1 = atom_struct1.z_pos[ind1];
+	double z2 = atom_struct2.z_pos[ind2];
 		
 	return sqrt((x1 - x2)*(x1-x2) + (y1 - y2)*(y1 - y2) + (z1 - z2)*(z1 - z2));
 }
 
-
+/*Algrithm 2: Block-based computation
+This algorithm uses the inter-block/intra-block method to allow use of
+shared memory for 2-BS computation.
+*/
 __global__ void PDH_kernel(double *x_arr, double *y_arr, double *z_arr, bucket *d_histogram, int PDH_acnt, int PDH_res){
-	int t = blockIdx.x * blockDim.x + threadIdx.x;
- 
-	int h_pos;
-	double dist;
 
-	for(int i = t + 1; i < PDH_acnt; i++){
-		dist = d_p2p_distance(x_arr, y_arr, z_arr, t, i);
+	//variables
+	int B = blockDim.x; //block size
+	int M = gridDim.x; //total number of blocks
+	int T = blockIdx.x * blockDim.x + threadIdx.x; //thread id in grid (global)
+	int t = threadIdx.x; //thread id within current block (local)
+	int b = blockIdx.x; //block id
+
+	//declare shared memory for block L
+	__shared__ atom L; //struct of arrays
+	__shared__ double Lx[256];
+	__shared__ double Ly[256];
+	__shared__ double Lz[256];
+
+	L.x_pos = Lx; //make struct data members point to the created shared arrays
+	L.y_pos = Ly;
+	L.z_pos = Lz;
+
+	//each thread loads [0-255] of the shared arrays for block L
+	if(T < PDH_acnt){
+	Lx[t] = x_arr[T]; //load from global thread index to local thread index
+	Ly[t] = y_arr[T];
+	Lz[t] = z_arr[T];
+	}
+
+	//declare shared memory for block R
+		__shared__ atom R; //struct of arrays
+		__shared__ double Rx[256];
+		__shared__ double Ry[256];
+		__shared__ double Rz[256];
+
+		R.x_pos = Rx; //make struct data members point to the created shared arrays
+		R.y_pos = Ry;
+		R.z_pos = Rz;
+	
+	__syncthreads(); //ensure all threads are finished loading shared memory
+
+	int h_pos; //position in the histogram to increment
+	double dist; //stores distance computed between 2 atoms
+
+	//nested loop for inter-block computation
+	for(int i = b + 1; i < M; i++){ //b+1, because intra-block distance is a later step
+
+		//each thread loads [0-255] of the shared arrays for block R
+		T = i * blockDim.x + threadIdx.x; //need to load "i-th block" away from the current block
+		if(T < PDH_acnt){
+		Rx[t] = x_arr[T]; //load from global thread index to local thread index
+		Ry[t] = y_arr[T];
+		Rz[t] = z_arr[T];
+		}
+
+		__syncthreads();
+
+		for(int j = 0; j < B && (i * blockDim.x + j) < PDH_acnt; j++){ //each block, 'L' computes distances between its own atoms and every other block's 'R'
+			dist = d_p2p_distance(L, R, t, j);
+			h_pos = (int) (dist / PDH_res);
+			atomicAdd(&(d_histogram[h_pos].d_cnt), 1);
+		}
+			 
+	}
+	
+	//loop for intra-block computation
+	for(int i = t + 1; i < B && (blockIdx.x * blockDim.x + i) < PDH_acnt; i++){ //each block computes distances between its own atoms
+		dist = d_p2p_distance(L, L, t, i);
 			h_pos = (int) (dist / PDH_res);
 			atomicAdd(&(d_histogram[h_pos].d_cnt), 1);
 			 
