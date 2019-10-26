@@ -112,6 +112,7 @@ int main(int argc, char **argv)
 
 	PDH_acnt = atoi(argv[1]);
 	PDH_res	 = atof(argv[2]);
+	int num_threads = atoi(argv[3]);
 
 	//Allocate host memory
 	num_buckets = (int)(BOX_SIZE * 1.732 / PDH_res) + 1;
@@ -141,7 +142,7 @@ int main(int argc, char **argv)
 	cudaMemcpy(d_atom_list, atom_list, sizeof(atom)*PDH_acnt, cudaMemcpyHostToDevice);
 
 	//Define block and grid size
-	int num_threads = 256; //number of threads in one dimension of a block
+	//int num_threads = 256; //number of threads in one dimension of a block
 	int num_blocks = (PDH_acnt + num_threads - 1)/num_threads; //calculate number of blocks needed
 	
 	//Start counting time
