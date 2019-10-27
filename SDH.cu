@@ -69,13 +69,12 @@ __global__ void PDH_kernel(atom *d_atom_list, bucket *d_histogram, int PDH_acnt,
 		s_histogram[i] = 0;
 	}
 
-	__syncthreads();
-
 	//load L into registers for inter-block computation
 	int Lx = d_atom_list[T].x_pos;
 	int Ly = d_atom_list[T].y_pos;
 	int Lz = d_atom_list[T].z_pos;
 	
+	__syncthreads();
  
 	int h_pos;
 	double dist;
