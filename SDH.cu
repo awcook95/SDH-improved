@@ -40,13 +40,10 @@ int num_buckets;		/* total number of buckets in the histogram */
 double   PDH_res;		/* value of w                               */
 atom * atom_list;		/* list of all data points					*/
 
-__device__ double d_p2p_distance(atom atom1, atom atom2) {
+__device__ double d_p2p_distance(double x1, double y1, double z1, atom atom2) {
 	
-	double x1 = atom1.x_pos;
 	double x2 = atom2.x_pos;
-	double y1 = atom1.y_pos;
 	double y2 = atom2.y_pos;
-	double z1 = atom1.z_pos;
 	double z2 = atom2.z_pos;
 		
 	return sqrt((x1 - x2)*(x1-x2) + (y1 - y2)*(y1 - y2) + (z1 - z2)*(z1 - z2));
@@ -65,20 +62,20 @@ __global__ void PDH_kernel(atom *d_atom_list, bucket *d_histogram, int PDH_acnt,
 	extern __shared__ int s[]; //one shared memory array for input and output
 
 	int *s_histogram = s; //pointer to first portion of shared memory (output)
-	atom *L_atom_list = (atom*)&s_histogram[num_buckets]; //pointer to second portion (input)
-	atom *R_atom_list = (atom*)&L_atom_list[B]; //pointer to third portion (input)
+	atom *R_atom_list = (atom*)&s_histogram[num_buckets]; //pointer to second portion (input)
 
 	//initialize output array to 0 in block sized chunks
 	for(int i = t; i < num_buckets; i += B){
 		s_histogram[i] = 0;
 	}
 
-	//initialize Block L
-	if(T < PDH_acnt){
-		L_atom_list[t] = d_atom_list[T]; //load from global thread index to local thread index
-		}
-
 	__syncthreads();
+
+	//load L into registers for inter-block computation
+	int Lx = d_atom_list[T].x_pos;
+	int Ly = d_atom_list[T].y_pos;
+	int Lz = d_atom_list[T].z_pos;
+	
  
 	int h_pos;
 	double dist;
@@ -95,22 +92,31 @@ __global__ void PDH_kernel(atom *d_atom_list, bucket *d_histogram, int PDH_acnt,
 		__syncthreads();
 
 		for(int j = 0; j < B && (i * B + j) < PDH_acnt; j++){ //each block, 'L' computes distances between its own atoms and every other block 'R'
-			dist = d_p2p_distance(L_atom_list[t], R_atom_list[j]);
+			dist = d_p2p_distance(Lx, Ly, Lz, R_atom_list[j]);
 			h_pos = (int) (dist / PDH_res);
 			atomicAdd(&(s_histogram[h_pos]), 1);
 		}
 		__syncthreads(); //second sync necessary because the outer loop will start loading before the inner loop is done
 	}
 
+	atom *L_atom_list = R_atom_list; //reuse R to cut down on shared memory use
+
+	//load Block L for intra-block computation
+	if(T < PDH_acnt){
+		L_atom_list[t] = d_atom_list[T];
+		}
+
+	__syncthreads();
+	
 	//loop for intra-block computation
 	for(int i = t + 1; i < B && (b * B + i) < PDH_acnt; i++){ //each block computes distances between its own atoms
-		dist = d_p2p_distance(L_atom_list[t], L_atom_list[i]);
+		dist = d_p2p_distance(Lx, Ly, Lz, L_atom_list[i]);
 			h_pos = (int) (dist / PDH_res);
 			atomicAdd(&(s_histogram[h_pos]), 1);
 			 
 	}
 
-	__syncthreads();
+	__syncthreads(); //finish writing to shared memory
 
 	//reduce shared output into global output
 	for(int i = t; i < num_buckets; i += B){ //output to global memory in block sized chunks
@@ -184,7 +190,7 @@ int main(int argc, char **argv)
 	cudaEventRecord(start, 0);
 
 	//Launch kernel
-	PDH_kernel<<<num_blocks,num_threads, sizeof(bucket)*num_buckets + 2*sizeof(atom)*num_threads>>>(d_atom_list, d_histogram, PDH_acnt, PDH_res, num_buckets);
+	PDH_kernel<<<num_blocks,num_threads, sizeof(bucket)*num_buckets + sizeof(atom)*num_threads>>>(d_atom_list, d_histogram, PDH_acnt, PDH_res, num_buckets);
 	//PDH_kernelST<<<1,1>>>(d_atom_list, d_histogram, PDH_acnt, PDH_res);
 
 	//stop counting time
